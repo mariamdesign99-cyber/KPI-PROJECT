@@ -4,14 +4,25 @@ import { Kpi, ChatMessage } from "../App";
 import { AnalysisData } from "../components/KpiCard";
 import { ReportData } from '../services/reportService';
 
+// --- Singleton AI Instance ---
+let aiInstance: GoogleGenAI | null = null;
 
-const API_KEY = process.env.API_KEY;
+function getAiInstance(): GoogleGenAI {
+    if (aiInstance) {
+        return aiInstance;
+    }
 
-if (!API_KEY) {
-  throw new Error("API_KEY environment variable not set");
+    const API_KEY = process.env.API_KEY;
+
+    if (!API_KEY) {
+        // This error will be caught by the calling function's try...catch block.
+        throw new Error("Ключ API не настроен. Функции AI недоступны.");
+    }
+
+    aiInstance = new GoogleGenAI({ apiKey: API_KEY });
+    return aiInstance;
 }
 
-const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 export async function generateKpiConcept(businessGoal: string): Promise<string> {
   const prompt = `
@@ -36,14 +47,16 @@ export async function generateKpiConcept(businessGoal: string): Promise<string> 
   `;
 
   try {
+    const ai = getAiInstance();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
     });
     return response.text;
   } catch (error) {
-    console.error("Error calling Gemini API:", error);
-    throw new Error("Failed to generate content from Gemini API.");
+    const errorMessage = `Ошибка при генерации концепции: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(errorMessage);
+    return errorMessage;
   }
 }
 
@@ -114,14 +127,16 @@ export async function generateTz(businessGoal: string, architecture: string, sce
     `;
 
     try {
+        const ai = getAiInstance();
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-pro', // Using a more powerful model for a complex task
+            model: 'gemini-2.5-pro',
             contents: prompt,
         });
         return response.text;
     } catch (error) {
-        console.error("Error calling Gemini API for TZ generation:", error);
-        throw new Error("Failed to generate TZ from Gemini API.");
+        const errorMessage = `Ошибка при генерации ТЗ: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        return errorMessage;
     }
 }
 
@@ -156,14 +171,16 @@ export async function generateAiAnalysis(input: AiAnalysisInput): Promise<string
     `;
 
     try {
+        const ai = getAiInstance();
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: prompt,
         });
         return response.text;
     } catch (error) {
-        console.error("Error calling Gemini API for AI analysis:", error);
-        throw new Error("Failed to generate AI analysis from Gemini API.");
+        const errorMessage = `Ошибка при генерации AI-анализа: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        return errorMessage;
     }
 }
 
@@ -199,43 +216,46 @@ export async function generateChatResponse(input: ChatInput): Promise<string> {
     `;
     
     try {
+        const ai = getAiInstance();
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: prompt,
         });
         return response.text;
     } catch (error) {
-        console.error("Error calling Gemini API for chat response:", error);
-        throw new Error("Failed to generate chat response from Gemini API.");
+        const errorMessage = `Ошибка при генерации ответа в чате: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        return errorMessage;
     }
 }
 
 
 export async function* generateChatResponseStream(input: ChatInput): AsyncGenerator<string> {
-    const contents = [
-        ...input.chatHistory.map(msg => ({
-            role: msg.role,
-            parts: [{ text: msg.text }]
-        })),
-        { role: 'user', parts: [{ text: input.newUserQuestion }] }
-    ];
-
-    const systemInstruction = `
-    Ты — полезный и дружелюбный бизнес-ассистент. Твоя задача — отвечать на вопросы пользователя об аналитике KPI.
-
-    КОНТЕКСТ АНАЛИЗА:
-    - **Анализируемый KPI:** ${input.kpi.title}
-    - **Текущее значение:** ${input.kpi.value}
-    - **Первоначальная автоматическая оценка:** ${input.initialAnalysis.geminiText.summary}
-    - **Первоначальные рекомендации:** ${input.initialAnalysis.geminiText.recommendations}
-    
-    Основываясь на всем предоставленном контексте (включая историю диалога), дай краткий и ясный ответ на новый вопрос пользователя. Отвечай на русском языке. Будь лаконичен.
-    `;
-    
     try {
+        const ai = getAiInstance();
+        const contents = [
+            ...input.chatHistory.map(msg => ({
+                role: msg.role,
+                parts: [{ text: msg.text }]
+            })),
+            { role: 'user', parts: [{ text: input.newUserQuestion }] }
+        ];
+
+        const systemInstruction = `
+        Ты — полезный и дружелюбный бизнес-ассистент. Твоя задача — отвечать на вопросы пользователя об аналитике KPI.
+
+        КОНТЕКСТ АНАЛИЗА:
+        - **Анализируемый KPI:** ${input.kpi.title}
+        - **Текущее значение:** ${input.kpi.value}
+        - **Первоначальная автоматическая оценка:** ${input.initialAnalysis.geminiText.summary}
+        - **Первоначальные рекомендации:** ${input.initialAnalysis.geminiText.recommendations}
+        
+        Основываясь на всем предоставленном контексте (включая историю диалога), дай краткий и ясный ответ на новый вопрос пользователя. Отвечай на русском языке. Будь лаконичен.
+        `;
+        
         const responseStream = await ai.models.generateContentStream({
             model: 'gemini-2.5-pro',
-            contents: contents as any, // Cast to any to satisfy the type until SDK types are updated
+            contents: contents as any,
             config: {
                 systemInstruction,
             },
@@ -245,8 +265,9 @@ export async function* generateChatResponseStream(input: ChatInput): AsyncGenera
             yield chunk.text;
         }
     } catch (error) {
-        console.error("Error calling Gemini API for chat stream:", error);
-        throw new Error("Failed to generate chat stream from Gemini API.");
+        const errorMessage = `Ошибка в потоке чата: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        yield errorMessage;
     }
 }
 
@@ -267,36 +288,37 @@ export async function* generateAssistantResponseStream(
     chatHistory: ChatMessage[], 
     context: AssistantContext
 ): AsyncGenerator<string> {
-    const latestUserMessage = chatHistory[chatHistory.length - 1];
-    if (!latestUserMessage || latestUserMessage.role !== 'user') {
-        return; 
-    }
-    
-    const historyForApi = chatHistory.slice(1).map(msg => ({
-        role: msg.role as ('user' | 'model'),
-        parts: [{ text: msg.text }]
-    }));
-    
-    const contextString = `
-    ДАННЫЕ ПОЛЬЗОВАТЕЛЯ ДЛЯ КОНТЕКСТА:
-    - Имя: ${context.user.firstName} ${context.user.lastName}
-    - Должность: ${context.user.role}
-    - Сводка активности:
-      ${context.activitySummary.map(a => `- ${a.label}: ${a.value} (изменение ${a.change > 0 ? '+' : ''}${a.change}%)`).join('\n      ')}
-    `;
-
-    const systemInstruction = `
-    Ты — умный и проактивный AI-советник, встроенный в личный кабинет пользователя на аналитической платформе KPI.
-    Твоя задача — помогать пользователю, отвечая на его вопросы и давая полезные советы на основе предоставленных данных.
-    - Обращайся к пользователю по имени (${context.user.firstName}).
-    - Будь кратким, дружелюбным и по делу.
-    - Используй данные из контекста для формирования ответов.
-    - Не придумывай данные, которых нет в контексте.
-    - Ответы должны быть в формате простого текста, без Markdown.
-    - Отвечай на русском языке.
-    `;
-    
     try {
+        const ai = getAiInstance();
+        const latestUserMessage = chatHistory[chatHistory.length - 1];
+        if (!latestUserMessage || latestUserMessage.role !== 'user') {
+            return; 
+        }
+        
+        const historyForApi = chatHistory.slice(1).map(msg => ({
+            role: msg.role as ('user' | 'model'),
+            parts: [{ text: msg.text }]
+        }));
+        
+        const contextString = `
+        ДАННЫЕ ПОЛЬЗОВАТЕЛЯ ДЛЯ КОНТЕКСТА:
+        - Имя: ${context.user.firstName} ${context.user.lastName}
+        - Должность: ${context.user.role}
+        - Сводка активности:
+          ${context.activitySummary.map(a => `- ${a.label}: ${a.value} (изменение ${a.change > 0 ? '+' : ''}${a.change}%)`).join('\n      ')}
+        `;
+
+        const systemInstruction = `
+        Ты — умный и проактивный AI-советник, встроенный в личный кабинет пользователя на аналитической платформе KPI.
+        Твоя задача — помогать пользователю, отвечая на его вопросы и давая полезные советы на основе предоставленных данных.
+        - Обращайся к пользователю по имени (${context.user.firstName}).
+        - Будь кратким, дружелюбным и по делу.
+        - Используй данные из контекста для формирования ответов.
+        - Не придумывай данные, которых нет в контексте.
+        - Ответы должны быть в формате простого текста, без Markdown.
+        - Отвечай на русском языке.
+        `;
+        
         const responseStream = await ai.models.generateContentStream({
             model: 'gemini-2.5-pro',
             contents: historyForApi,
@@ -309,8 +331,9 @@ export async function* generateAssistantResponseStream(
             yield chunk.text;
         }
     } catch (error) {
-        console.error("Error calling Gemini API for assistant stream:", error);
-        throw new Error("Failed to generate assistant stream from Gemini API.");
+        const errorMessage = `Ошибка в потоке ассистента: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        yield errorMessage;
     }
 }
 
@@ -359,14 +382,16 @@ export async function generateOverallAnalysis(input: OverallAnalysisInput): Prom
     `;
 
     try {
+        const ai = getAiInstance();
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: prompt,
         });
         return response.text;
     } catch (error) {
-        console.error("Error calling Gemini API for overall analysis:", error);
-        throw new Error("Failed to generate overall analysis from Gemini API.");
+        const errorMessage = `Ошибка при создании общего анализа: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        return errorMessage;
     }
 }
 
@@ -379,34 +404,33 @@ export interface OverallChatInput {
 }
 
 export async function* generateOverallChatResponseStream(input: OverallChatInput): AsyncGenerator<string> {
-    const kpiSummaries = input.kpis.map(kpi => 
-        `- ${kpi.title}: ${kpi.value} (изменение ${kpi.change > 0 ? '+' : ''}${kpi.change}%)`
-    ).join('\n');
-
-    // The first message from the model (initial analysis) is part of the system prompt, not chat history.
-    const historyForApi = input.chatHistory.slice(1).map(msg => ({
-        role: msg.role as ('user' | 'model'),
-        parts: [{ text: msg.text }]
-    }));
-    
-    // Add the new user question
-    historyForApi.push({ role: 'user', parts: [{ text: input.newUserQuestion }] });
-
-    const systemInstruction = `
-    Ты — ведущий бизнес-аналитик. Ты уже предоставил сводный отчет по KPI. Теперь твоя задача — отвечать на уточняющие вопросы пользователя, основываясь на этом отчете и данных по KPI.
-
-    КОНТЕКСТ АНАЛИЗА:
-    - **Анализируемый период:** ${input.period}
-    - **Анализируемые KPI:**
-    ${kpiSummaries}
-    - **Твой первоначальный сводный отчет:**
-    ${input.initialAnalysis}
-    
-    ЗАДАЧА:
-    Основываясь на всем предоставленном контексте и истории диалога, дай краткий, ясный и профессиональный ответ на новый вопрос пользователя. Отвечай на русском языке. Будь лаконичен.
-    `;
-    
     try {
+        const ai = getAiInstance();
+        const kpiSummaries = input.kpis.map(kpi => 
+            `- ${kpi.title}: ${kpi.value} (изменение ${kpi.change > 0 ? '+' : ''}${kpi.change}%)`
+        ).join('\n');
+
+        const historyForApi = input.chatHistory.slice(1).map(msg => ({
+            role: msg.role as ('user' | 'model'),
+            parts: [{ text: msg.text }]
+        }));
+        
+        historyForApi.push({ role: 'user', parts: [{ text: input.newUserQuestion }] });
+
+        const systemInstruction = `
+        Ты — ведущий бизнес-аналитик. Ты уже предоставил сводный отчет по KPI. Теперь твоя задача — отвечать на уточняющие вопросы пользователя, основываясь на этом отчете и данных по KPI.
+
+        КОНТЕКСТ АНАЛИЗА:
+        - **Анализируемый период:** ${input.period}
+        - **Анализируемые KPI:**
+        ${kpiSummaries}
+        - **Твой первоначальный сводный отчет:**
+        ${input.initialAnalysis}
+        
+        ЗАДАЧА:
+        Основываясь на всем предоставленном контексте и истории диалога, дай краткий, ясный и профессиональный ответ на новый вопрос пользователя. Отвечай на русском языке. Будь лаконичен.
+        `;
+        
         const responseStream = await ai.models.generateContentStream({
             model: 'gemini-2.5-pro',
             contents: historyForApi,
@@ -419,95 +443,104 @@ export async function* generateOverallChatResponseStream(input: OverallChatInput
             yield chunk.text;
         }
     } catch (error) {
-        console.error("Error calling Gemini API for overall chat stream:", error);
-        throw new Error("Failed to generate overall chat stream from Gemini API.");
+        const errorMessage = `Ошибка в потоке общего чата: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        yield errorMessage;
     }
 }
 
 export async function generateDeepDiveAnalysis(kpiName: string, data: number[], period: string): Promise<string> {
-    const stats = {
-        avg: (data.reduce((a, b) => a + b, 0) / data.length).toFixed(2),
-        max: Math.max(...data).toFixed(2),
-        min: Math.min(...data).toFixed(2),
-        change: data.length > 1 ? (((data[data.length - 1] - data[0]) / (data[0] || 1)) * 100).toFixed(1) : '0.0'
-    };
+    try {
+        const ai = getAiInstance();
+        const stats = {
+            avg: (data.reduce((a, b) => a + b, 0) / data.length).toFixed(2),
+            max: Math.max(...data).toFixed(2),
+            min: Math.min(...data).toFixed(2),
+            change: data.length > 1 ? (((data[data.length - 1] - data[0]) / (data[0] || 1)) * 100).toFixed(1) : '0.0'
+        };
 
-    const prompt = `
-    Ты — старший дата-аналитик. Проведи глубокий анализ KPI "${kpiName}" за период "${period}".
+        const prompt = `
+        Ты — старший дата-аналитик. Проведи глубокий анализ KPI "${kpiName}" за период "${period}".
 
-    ВХОДНЫЕ ДАННЫЕ:
-    - **Среднее значение:** ${stats.avg}
-    - **Максимум:** ${stats.max}
-    - **Минимум:** ${stats.min}
-    - **Общее изменение за период:** ${stats.change}%
+        ВХОДНЫЕ ДАННЫЕ:
+        - **Среднее значение:** ${stats.avg}
+        - **Максимум:** ${stats.max}
+        - **Минимум:** ${stats.min}
+        - **Общее изменение за период:** ${stats.change}%
 
-    ЗАДАЧА:
-    Сгенерируй краткий, но емкий аналитический отчет в формате Markdown. Отчет должен быть на русском языке.
+        ЗАДАЧА:
+        Сгенерируй краткий, но емкий аналитический отчет в формате Markdown. Отчет должен быть на русском языке.
 
-    ### Ключевые наблюдения
-    (Опиши основной тренд, волатильность и выдели 1-2 значимых пика или просадки в данных. Например: "Показатель демонстрирует устойчивый рост с периодическими коррекциями в середине недели...")
+        ### Ключевые наблюдения
+        (Опиши основной тренд, волатильность и выдели 1-2 значимых пика или просадки в данных. Например: "Показатель демонстрирует устойчивый рост с периодическими коррекциями в середине недели...")
 
-    ### Возможные причины
-    (Предложи 2-3 гипотезы, которые могли бы объяснить наблюдаемую динамику. Будь конкретен. Например: "Рост может быть связан с запуском новой рекламной кампании X, а просадка 15-го числа - с техническими работами на сервере.")
+        ### Возможные причины
+        (Предложи 2-3 гипотезы, которые могли бы объяснить наблюдаемую динамику. Будь конкретен. Например: "Рост может быть связан с запуском новой рекламной кампании X, а просадка 15-го числа - с техническими работами на сервере.")
 
-    ### Рекомендации
-    (Дай 2 конкретные рекомендации в виде маркированного списка. Например: 
-    - **Масштабировать:** Увеличить бюджет на кампанию X, так как она показывает высокую эффективность.
-    - **Исследовать:** Проанализировать данные за 15-е число, чтобы подтвердить влияние технических работ.)
-    `;
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-pro',
-        contents: prompt,
-    });
-    return response.text;
+        ### Рекомендации
+        (Дай 2 конкретные рекомендации в виде маркированного списка. Например: 
+        - **Масштабировать:** Увеличить бюджет на кампанию X, так как она показывает высокую эффективность.
+        - **Исследовать:** Проанализировать данные за 15-е число, чтобы подтвердить влияние технических работ.)
+        `;
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: prompt,
+        });
+        return response.text;
+    } catch (error) {
+        const errorMessage = `Ошибка при глубоком анализе: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        return errorMessage;
+    }
 }
 
-// FIX: Added missing function to provide AI-powered correlation analysis.
 export async function generateCorrelationAnalysis(kpi1Name: string, kpi2Name: string, correlation: number): Promise<string> {
-    const correlationStrength = Math.abs(correlation);
-    let strengthDescription: string;
-    if (correlationStrength >= 0.7) {
-        strengthDescription = 'сильная';
-    } else if (correlationStrength >= 0.4) {
-        strengthDescription = 'умеренная';
-    } else if (correlationStrength >= 0.2) {
-        strengthDescription = 'слабая';
-    } else {
-        strengthDescription = 'очень слабая или отсутствует';
-    }
-
-    const directionDescription = correlation > 0 ? 'прямая (положительная)' : 'обратная (отрицательная)';
-
-    const prompt = `
-    Ты — опытный бизнес-аналитик. Твоя задача — кратко и понятно для менеджера интерпретировать коэффициент корреляции между двумя KPI.
-
-    ДАННЫЕ:
-    - KPI 1: "${kpi1Name}"
-    - KPI 2: "${kpi2Name}"
-    - Коэффициент корреляции: ${correlation.toFixed(3)}
-
-    ИНТЕРПРЕТАЦИЯ КОЭФФИЦИЕНТА:
-    - Сила связи: ${strengthDescription}
-    - Направление связи: ${directionDescription}
-
-    ЗАДАЧА:
-    Напиши короткий вывод (2-3 предложения) на русском языке, который объясняет, что эта корреляция может означать на практике для бизнеса.
-    - Не используй сложные статистические термины.
-    - Предложи одну возможную причину такой взаимосвязи.
-    - Ответ должен быть в формате простого текста, без заголовков и Markdown.
-
-    Пример: "Наблюдается сильная положительная связь. Это означает, что рост выручки, как правило, сопровождается увеличением числа новых клиентов. Вероятно, это связано с успешными маркетинговыми кампаниями, которые привлекают платящих пользователей."
-    `;
-
     try {
+        const ai = getAiInstance();
+        const correlationStrength = Math.abs(correlation);
+        let strengthDescription: string;
+        if (correlationStrength >= 0.7) {
+            strengthDescription = 'сильная';
+        } else if (correlationStrength >= 0.4) {
+            strengthDescription = 'умеренная';
+        } else if (correlationStrength >= 0.2) {
+            strengthDescription = 'слабая';
+        } else {
+            strengthDescription = 'очень слабая или отсутствует';
+        }
+
+        const directionDescription = correlation > 0 ? 'прямая (положительная)' : 'обратная (отрицательная)';
+
+        const prompt = `
+        Ты — опытный бизнес-аналитик. Твоя задача — кратко и понятно для менеджера интерпретировать коэффициент корреляции между двумя KPI.
+
+        ДАННЫЕ:
+        - KPI 1: "${kpi1Name}"
+        - KPI 2: "${kpi2Name}"
+        - Коэффициент корреляции: ${correlation.toFixed(3)}
+
+        ИНТЕРПРЕТАЦИЯ КОЭФФИЦИЕНТА:
+        - Сила связи: ${strengthDescription}
+        - Направление связи: ${directionDescription}
+
+        ЗАДАЧА:
+        Напиши короткий вывод (2-3 предложения) на русском языке, который объясняет, что эта корреляция может означать на практике для бизнеса.
+        - Не используй сложные статистические термины.
+        - Предложи одну возможную причину такой взаимосвязи.
+        - Ответ должен быть в формате простого текста, без заголовков и Markdown.
+
+        Пример: "Наблюдается сильная положительная связь. Это означает, что рост выручки, как правило, сопровождается увеличением числа новых клиентов. Вероятно, это связано с успешными маркетинговыми кампаниями, которые привлекают платящих пользователей."
+        `;
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt,
         });
         return response.text;
     } catch (error) {
-        console.error("Error calling Gemini API for correlation analysis:", error);
-        throw new Error("Failed to generate correlation analysis from Gemini API.");
+        const errorMessage = `Ошибка при анализе корреляции: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        return errorMessage;
     }
 }
 
@@ -521,26 +554,27 @@ export interface CorrelationChatInput {
 }
 
 export async function* generateCorrelationChatResponseStream(input: CorrelationChatInput): AsyncGenerator<string> {
-    const historyForApi = input.chatHistory.map(msg => ({
-        role: msg.role as ('user' | 'model'),
-        parts: [{ text: msg.text }]
-    }));
-
-    const systemInstruction = `
-    Ты — опытный бизнес-аналитик. Ты уже предоставил краткую интерпретацию корреляции между двумя KPI. Теперь твоя задача — отвечать на уточняющие вопросы пользователя.
-
-    КОНТЕКСТ АНАЛИЗА:
-    - **Показатель 1:** ${input.kpi1.title}
-    - **Показатель 2:** ${input.kpi2.title}
-    - **Коэффициент корреляции:** ${input.correlation.toFixed(3)}
-    - **Твоя первоначальная интерпретация:**
-      ${input.initialAnalysis}
-    
-    ЗАДАЧА:
-    Основываясь на всем предоставленном контексте и истории диалога, дай краткий, ясный и профессиональный ответ на новый вопрос пользователя. Отвечай на русском языке. Будь лаконичен.
-    `;
-    
     try {
+        const ai = getAiInstance();
+        const historyForApi = input.chatHistory.map(msg => ({
+            role: msg.role as ('user' | 'model'),
+            parts: [{ text: msg.text }]
+        }));
+
+        const systemInstruction = `
+        Ты — опытный бизнес-аналитик. Ты уже предоставил краткую интерпретацию корреляции между двумя KPI. Теперь твоя задача — отвечать на уточняющие вопросы пользователя.
+
+        КОНТЕКСТ АНАЛИЗА:
+        - **Показатель 1:** ${input.kpi1.title}
+        - **Показатель 2:** ${input.kpi2.title}
+        - **Коэффициент корреляции:** ${input.correlation.toFixed(3)}
+        - **Твоя первоначальная интерпретация:**
+          ${input.initialAnalysis}
+        
+        ЗАДАЧА:
+        Основываясь на всем предоставленном контексте и истории диалога, дай краткий, ясный и профессиональный ответ на новый вопрос пользователя. Отвечай на русском языке. Будь лаконичен.
+        `;
+        
         const responseStream = await ai.models.generateContentStream({
             model: 'gemini-2.5-pro',
             contents: historyForApi,
@@ -553,8 +587,9 @@ export async function* generateCorrelationChatResponseStream(input: CorrelationC
             yield chunk.text;
         }
     } catch (error) {
-        console.error("Error calling Gemini API for correlation chat stream:", error);
-        throw new Error("Failed to generate correlation chat stream from Gemini API.");
+        const errorMessage = `Ошибка в потоке чата по корреляции: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        yield errorMessage;
     }
 }
 
@@ -594,14 +629,16 @@ export async function generateReportAnalysis(input: ReportAnalysisInput): Promis
     `;
 
     try {
+        const ai = getAiInstance();
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: prompt,
         });
         return response.text;
     } catch (error) {
-        console.error("Error calling Gemini API for report analysis:", error);
-        throw new Error("Failed to generate report analysis from Gemini API.");
+        const errorMessage = `Ошибка при анализе отчета: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        return errorMessage;
     }
 }
 
@@ -616,45 +653,47 @@ export interface ReportChatInput {
 
 
 export async function* generateReportChatResponseStream(input: ReportChatInput): AsyncGenerator<string> {
-     const kpiSummaries = input.reportData.kpis.map(kpi => 
-        `- ${kpi.label}: ${kpi.value} (изменение ${kpi.change})`
-    ).join('\n');
-    
-    const historyForApi = input.chatHistory.map(msg => ({
-        role: msg.role as ('user' | 'model'),
-        parts: [{ text: msg.text }]
-    }));
-    
-    historyForApi.push({ role: 'user', parts: [{ text: input.newUserQuestion }] });
-
-    const systemInstruction = `
-    Ты — бизнес-аналитик, который помогает пользователю разобраться в отчете по KPI. Ты уже предоставил первоначальный анализ. Теперь отвечай на уточняющие вопросы.
-
-    КОНТЕКСТ АНАЛИЗА:
-    - **Анализируемый период:** ${input.period}
-    - **Данные отчета:**
-    ${kpiSummaries}
-    - **Твой первоначальный анализ:**
-    ${input.initialAnalysis}
-    
-    ЗАДАЧА:
-    Основываясь на всем контексте и истории диалога, дай краткий и ясный ответ на новый вопрос пользователя. Отвечай на русском языке.
-    `;
-    
     try {
-        const responseStream = await ai.models.generateContentStream({
-            model: 'gemini-2.5-pro',
-            contents: historyForApi,
-            config: {
-                systemInstruction,
-            },
-        });
+        const ai = getAiInstance();
+        const kpiSummaries = input.reportData.kpis.map(kpi => 
+           `- ${kpi.label}: ${kpi.value} (изменение ${kpi.change})`
+       ).join('\n');
+       
+       const historyForApi = input.chatHistory.map(msg => ({
+           role: msg.role as ('user' | 'model'),
+           parts: [{ text: msg.text }]
+       }));
+       
+       historyForApi.push({ role: 'user', parts: [{ text: input.newUserQuestion }] });
 
-        for await (const chunk of responseStream) {
-            yield chunk.text;
-        }
+       const systemInstruction = `
+       Ты — бизнес-аналитик, который помогает пользователю разобраться в отчете по KPI. Ты уже предоставил первоначальный анализ. Теперь отвечай на уточняющие вопросы.
+
+       КОНТЕКСТ АНАЛИЗА:
+       - **Анализируемый период:** ${input.period}
+       - **Данные отчета:**
+       ${kpiSummaries}
+       - **Твой первоначальный анализ:**
+       ${input.initialAnalysis}
+       
+       ЗАДАЧА:
+       Основываясь на всем контексте и истории диалога, дай краткий и ясный ответ на новый вопрос пользователя. Отвечай на русском языке.
+       `;
+       
+       const responseStream = await ai.models.generateContentStream({
+           model: 'gemini-2.5-pro',
+           contents: historyForApi,
+           config: {
+               systemInstruction,
+           },
+       });
+
+       for await (const chunk of responseStream) {
+           yield chunk.text;
+       }
     } catch (error) {
-        console.error("Error calling Gemini API for report chat stream:", error);
-        throw new Error("Failed to generate report chat stream from Gemini API.");
+        const errorMessage = `Ошибка в потоке чата по отчету: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(errorMessage);
+        yield errorMessage;
     }
 }
